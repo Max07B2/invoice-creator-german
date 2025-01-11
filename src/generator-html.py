@@ -8,6 +8,9 @@ import datetime
 # see near the end of this script
 merge_pdf_and_xml = False
 
+# get a cryptographic timestamp for the generated .pdf and .xml files
+timestamp_invoice = False
+
 # argument key , description, default value, key in html
 argkeys_customer = [
     ["customerCompany", "Name of the company" , "FirmaXYZ", "REC-COMPANY"],
@@ -85,6 +88,9 @@ def main():
     # If cache directory does not exist, create it
     if not os.path.exists(cache_dir):
         os.makedirs(cache_dir)
+
+    # empty cache directory
+    os.system(f"rm -f {cache_dir}/*")
 
     # If config directory does not exist, create it
     if not os.path.exists(config_dir):
@@ -589,6 +595,16 @@ def main():
     f.writelines(lines)
     f.close()
 
+    # timestamp the original files
+    if timestamp_invoice:
+        os.system(f"openssl ts -query -data {cache_dir}/invoice.pdf -no_nonce -sha512 -cert -out {cache_dir}/invoice.pdf.tsq")
+        os.system(f"""curl -H "Content-Type: application/timestamp-query" --data-binary '@{cache_dir}/invoice.pdf.tsq' http://timestamp.digicert.com > {cache_dir}/invoice.pdf.tsr""")
+        os.system(f"openssl ts -verify -data {cache_dir}/invoice.pdf -in {cache_dir}/invoice.pdf.tsr -CAfile ../timestamp/cacerts.pem")
+
+        os.system(f"openssl ts -query -data {cache_dir}/invoice.xml -no_nonce -sha512 -cert -out {cache_dir}/invoice.xml.tsq")
+        os.system(f"""curl -H "Content-Type: application/timestamp-query" --data-binary '@{cache_dir}/invoice.xml.tsq' http://timestamp.digicert.com > {cache_dir}/invoice.xml.tsr""")
+        os.system(f"openssl ts -verify -data {cache_dir}/invoice.xml -in {cache_dir}/invoice.xml.tsr -CAfile ../timestamp/cacerts.pem")
+    
     # Create the combined pdf+xml file
     
     if merge_pdf_and_xml:
@@ -601,12 +617,16 @@ def main():
         os.system(f"pdftops {cache_dir}/invoice.pdf {cache_dir}/invoice.ps")
         
         # step 2: convert ps to pdf/a-1 with gs
-        os.system(f"rm -f {cache_dir}/invoice_a.pdf")
         os.system(f"gs -dPDFA -dBATCH -dNOPAUSE -sColorConversionStrategy=UseDeviceIndependentColor -sDEVICE=pdfwrite -dPDFACompatibilityPolicy=1 -sOutputFile={cache_dir}/invoice_a.pdf {cache_dir}/invoice.ps")
         
         # step 3: combine pdf/a-1 an xml to one pdf/a-1 file with the mustang library
-        os.system(f"rm -f {cache_dir}/invoice_c.pdf")
         os.system(f"java -Xmx1G -Dfile.encoding=UTF-8 -jar ../mustang-cli/Mustang-CLI-2.15.2.jar --action combine -source {cache_dir}/invoice_a.pdf -source-xml {cache_dir}/invoice.xml -out {cache_dir}/invoice_c.pdf -attachments '' -format zf -version 2 -profile x")
+
+        # timestamp file
+        if timestamp_invoice:
+            os.system(f"openssl ts -query -data {cache_dir}/invoice_c.pdf -no_nonce -sha512 -cert -out {cache_dir}/invoice_c.pdf.tsq")
+            os.system(f"""curl -H "Content-Type: application/timestamp-query" --data-binary '@{cache_dir}/invoice_c.pdf.tsq' http://timestamp.digicert.com > {cache_dir}/invoice_c.pdf.tsr""")
+            os.system(f"openssl ts -verify -data {cache_dir}/invoice_c.pdf -in {cache_dir}/invoice_c.pdf.tsr -CAfile ../timestamp/cacerts.pem")
 
     # Copy the generated files to the invoice directory
 
@@ -618,10 +638,23 @@ def main():
     print_path_xml = print_path.replace("_o.pdf", "_o.xml")
     os.system(f"cp {cache_dir}/invoice.xml {print_path_xml}")
 
+    # - timestamp file
+    if timestamp_invoice:
+        os.system(f"cp {cache_dir}/invoice.pdf.tsq {print_path}.tsq")
+        os.system(f"cp {cache_dir}/invoice.pdf.tsr {print_path}.tsr")
+
+        os.system(f"cp {cache_dir}/invoice.xml.tsq {print_path_xml}.tsq")
+        os.system(f"cp {cache_dir}/invoice.xml.tsr {print_path_xml}.tsr")
+
     # - combined pdf 
     if merge_pdf_and_xml:
         print_path = print_path.replace("_o.pdf", "_c.pdf")
         os.system(f"cp {cache_dir}/invoice_c.pdf {print_path}")
+
+        # - timestamp file
+        if timestamp_invoice:
+            os.system(f"cp {cache_dir}/invoice_c.pdf.tsq {print_path}.tsq")
+            os.system(f"cp {cache_dir}/invoice_c.pdf.tsr {print_path}.tsr")
 
     print("InvoicePath: " + print_path)
     pass
